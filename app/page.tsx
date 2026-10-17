@@ -67,6 +67,14 @@ export default function Home() {
       {error && <p role="alert" style={{ color: '#ff9c9c' }}>{error}</p>}
       {videoUrl && <div><video src={videoUrl} controls playsInline style={{ width: '100%', marginTop: 12, borderRadius: 10 }} /><p><a href={videoUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#8fc9ff' }}>Open / Download MP4</a></p></div>}
     </section>
+    <section style={{ background: '#111b30', padding: 18, borderRadius: 14, marginBottom: 24 }}>
+      <h2>Free video workflow · no payment</h2>
+      <p style={{ color: '#aebbd2' }}>Copy your prompt, open a free video playground, and check its current free quota. This is an external workflow, not automatic generation inside Studio.</p>
+      <button onClick={() => navigator.clipboard.writeText(videoPrompt).then(() => setStatus('Prompt copied')).catch(() => setError('Copy failed. Select the prompt above manually.'))} style={{ ...field, background: '#176d61', cursor: 'pointer' }}>Copy video prompt</button>
+      <a href="https://huggingface.co/spaces?sort=trending&search=text%20to%20video" target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 14, color: '#8fc9ff' }}>Find free community video generators on Hugging Face ↗</a>
+      <a href="https://pollinations.ai/play" target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 12, color: '#8fc9ff' }}>Check Pollinations video playground and available quota ↗</a>
+      <p style={{ color: '#aebbd2', fontSize: 13 }}>Availability, free quotas, watermarks and download options depend on each external service. Do not add a payment method.</p>
+    </section>
     <h2>Storyboard builder</h2>
     <label>Project name</label><input style={field} value={title} onChange={e => setTitle(e.target.value)} />
     <p>Character & style lock</p><textarea style={field} rows={3} value={character} onChange={e => setCharacter(e.target.value)} placeholder="Describe consistent characters, style and camera..." />
