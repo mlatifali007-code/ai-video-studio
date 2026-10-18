@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { NextRequest } from 'next/server';
+import { draftScenes, projectSchema, promptFor, videoSchema } from '../lib/schema';
+import { POST as videoPost, GET as videoGet } from '../app/api/video/route';
+import { POST as agentPost } from '../app/api/agent/route';
+import { body } from '../lib/server';
+const uuid=()=>crypto.randomUUID();
+test('four short sentences form a 20-second timeline',()=>{const scenes=draftScenes('A fox arrives. It hears a bird. It lifts a branch. Both are safe.');assert.equal(scenes.length,4);assert.equal(scenes.length*5,20);assert.equal(new Set(scenes.map(s=>s.id)).size,4);});
+test('narration chunks do not exceed 12 words and text is preserved',()=>{const text=Array.from({length:30},(_,i)=>`word${i}`).join(' ');const scenes=draftScenes(text);assert.equal(scenes.length,3);assert.equal(scenes.map(s=>s.narration).join(' '),text);assert.ok(scenes.every(s=>s.narration.split(' ').length<=12));});
+test('large scripts fail rather than silently losing scenes',()=>{assert.throws(()=>draftScenes(Array(121).fill('One.').join(' ')),/120/);});
+test('character and camera locks appear in prompt',()=>{const s=draftScenes('Fox runs.')[0];const p=projectSchema.parse({id:uuid(),title:'Film',character:'Exact red fox',script:'',ratio:'9:16',scenes:[s],updatedAt:new Date().toISOString()});assert.match(promptFor(p,s),/Exact red fox/);assert.match(promptFor(p,s),/Camera: Wide establishing shot/);});
+test('invalid images, remote fetch URLs and malformed UUIDs are rejected',()=>{const base={projectId:uuid(),sceneId:uuid(),key:uuid(),prompt:'Fox runs',ratio:'16:9'};assert.equal(videoSchema.safeParse({...base,image:'http://127.0.0.1/private'}).success,false);assert.equal(videoSchema.safeParse({...base,image:'data:image/svg+xml;base64,AAAA'}).success,false);assert.equal(videoSchema.safeParse({...base,key:'wrong'}).success,false);assert.equal(videoSchema.safeParse({...base,image:'data:image/png;base64,AAAA'}).success,true);});
+test('generation is fail-closed even when a key exists',async()=>{process.env.ENABLE_PAID_GENERATION='false';process.env.FAL_KEY='test-never-send';const result=await videoPost(new NextRequest('http://localhost/api/video',{method:'POST',body:'{}'}));assert.equal(result.status,503);assert.match((await result.json()).error,/zero budget/);delete process.env.FAL_KEY;});
+test('unconfigured cloud cannot reveal jobs',async()=>{delete process.env.NEXT_PUBLIC_SUPABASE_URL;const r=await videoGet(new NextRequest('http://localhost/api/video'));assert.equal(r.status,503);});
+test('missing token cannot query configured cloud',async()=>{process.env.NEXT_PUBLIC_SUPABASE_URL='https://example.supabase.co';process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY='test';const r=await videoGet(new NextRequest('http://localhost/api/video'));assert.equal(r.status,401);delete process.env.NEXT_PUBLIC_SUPABASE_URL;delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;});
+test('unconfigured agent reports unavailable instead of mock output',async()=>{delete process.env.OLLAMA_BASE_URL;const r=await agentPost(new NextRequest('http://localhost/api/agent',{method:'POST',body:'{}'}));assert.equal(r.status,503);});
+test('request size limit applies without content-length',async()=>{await assert.rejects(body(new NextRequest('http://localhost/api/test',{method:'POST',body:JSON.stringify({text:'a'.repeat(500)})}),50),/too large/);});

@@ -1,88 +1,60 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { api, supabase } from '../lib/client';
+import { draftScenes, Project, projectSchema, promptFor, Scene } from '../lib/schema';
+import { download, getMedia, putMedia, removeMedia, renderFilm } from '../lib/media';
 
-type Scene = { number: number; text: string };
-export default function Home() {
-  const [title, setTitle] = useState('My First Film');
-  const [script, setScript] = useState('');
-  const [character, setCharacter] = useState('');
-  const [duration, setDuration] = useState(5);
-  const [scenes, setScenes] = useState<Scene[]>([]);
-  const [videoPrompt, setVideoPrompt] = useState('Photorealistic cinematic shot of a lone astronaut walking through an abandoned space station corridor, red emergency lights blinking, camera slowly pushes forward, realistic physics, no text.');
-  const [requestId, setRequestId] = useState('');
-  const [videoUrl, setVideoUrl] = useState('');
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!requestId || videoUrl || error) return;
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const response = await fetch('/api/video?requestId=' + encodeURIComponent(requestId), { cache: 'no-store' });
-        const data = await response.json();
-        if (cancelled) return;
-        if (!response.ok) throw new Error(data.error || 'Status check failed');
-        setStatus(data.status || 'Processing');
-        if (data.videoUrl) { setVideoUrl(data.videoUrl); setBusy(false); }
-      } catch (e) {
-        if (!cancelled) { setError(e instanceof Error ? e.message : 'Status check failed'); setBusy(false); }
-      }
-    };
-    void check();
-    const timer = setInterval(() => void check(), 7000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [requestId, videoUrl, error]);
-
-  function generateStoryboard() {
-    const chunks = script.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(Boolean);
-    setScenes(chunks.map((text, i) => ({ number: i + 1, text })));
-  }
-  function exportStoryboard() {
-    const blob = new Blob([JSON.stringify({ title, duration, character, scenes }, null, 2)], { type: 'application/json' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob); link.download = 'storyboard.json'; link.click(); URL.revokeObjectURL(link.href);
-  }
-  async function generateVideo() {
-    setError(''); setVideoUrl(''); setRequestId(''); setStatus('Submitting'); setBusy(true);
-    try {
-      const response = await fetch('/api/video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: videoPrompt }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not start generation');
-      setRequestId(data.requestId); setStatus('IN_QUEUE');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Generation failed'); setBusy(false); }
-  }
-  const field = { width: '100%', boxSizing: 'border-box' as const, padding: 12, borderRadius: 10, background: '#17223b', border: '1px solid #34415e', color: 'white', fontSize: 16 };
-  return <main style={{ maxWidth: 860, margin: 'auto', padding: 20, color: '#fff' }}>
-    <h1>🎬 AI Video Studio</h1>
-    <p style={{ color: '#aebbd2' }}>Mobile-first storyboard and AI video workspace</p>
-    <section style={{ background: '#111b30', padding: 18, borderRadius: 14, marginBottom: 24 }}>
-      <h2>Generate a real AI video</h2>
-      <p style={{ color: '#aebbd2' }}>Wan 2.2 5B · up to 5 seconds · 720p · 16:9. Requires configured fal.ai API credits. Generation may incur charges.</p>
-      <label htmlFor="video-prompt">Video prompt</label>
-      <textarea id="video-prompt" style={field} rows={5} value={videoPrompt} maxLength={3000} onChange={e => setVideoPrompt(e.target.value)} />
-      <button onClick={generateVideo} disabled={busy || !videoPrompt.trim()} style={{ ...field, marginTop: 12, background: busy ? '#444' : '#6754e8', cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Generating…' : 'Generate 5s Video'}</button>
-      {status && <p role="status">Status: {status}</p>}
-      {error && <p role="alert" style={{ color: '#ff9c9c' }}>{error}</p>}
-      {videoUrl && <div><video src={videoUrl} controls playsInline style={{ width: '100%', marginTop: 12, borderRadius: 10 }} /><p><a href={videoUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#8fc9ff' }}>Open / Download MP4</a></p></div>}
-    </section>
-    <section style={{ background: '#111b30', padding: 18, borderRadius: 14, marginBottom: 24 }}>
-      <h2>Free video workflow · no payment</h2>
-      <p style={{ color: '#aebbd2' }}>Copy your prompt, open a free video playground, and check its current free quota. This is an external workflow, not automatic generation inside Studio.</p>
-      <button onClick={() => navigator.clipboard.writeText(videoPrompt).then(() => setStatus('Prompt copied')).catch(() => setError('Copy failed. Select the prompt above manually.'))} style={{ ...field, background: '#176d61', cursor: 'pointer' }}>Copy video prompt</button>
-      <a href="https://huggingface.co/spaces?sort=trending&search=text%20to%20video" target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 14, color: '#8fc9ff' }}>Find free community video generators on Hugging Face ↗</a>
-      <a href="https://pollinations.ai/play" target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 12, color: '#8fc9ff' }}>Check Pollinations video playground and available quota ↗</a>
-      <p style={{ color: '#aebbd2', fontSize: 13 }}>Availability, free quotas, watermarks and download options depend on each external service. Do not add a payment method.</p>
-    </section>
-    <h2>Storyboard builder</h2>
-    <label>Project name</label><input style={field} value={title} onChange={e => setTitle(e.target.value)} />
-    <p>Character & style lock</p><textarea style={field} rows={3} value={character} onChange={e => setCharacter(e.target.value)} placeholder="Describe consistent characters, style and camera..." />
-    <p>Script</p><textarea style={field} rows={8} value={script} onChange={e => setScript(e.target.value)} placeholder="Paste your story or narration here..." />
-    <p>Target clip duration</p><select style={field} value={duration} onChange={e => setDuration(Number(e.target.value))}><option value={5}>5 seconds</option><option value={10}>10 seconds</option></select>
-    <button onClick={generateStoryboard} style={{ ...field, background: '#6754e8', marginTop: 16, cursor: 'pointer' }}>Create storyboard</button>
-    <p style={{ color: '#aebbd2' }}>Each sentence becomes one draft scene. Timing is a target, not automatically validated.</p>
-    {scenes.map(s => <article key={s.number} style={{ background: '#17223b', borderRadius: 12, padding: 16, marginTop: 12 }}><b>Scene {String(s.number).padStart(3, '0')} · {duration}s target</b><p>{s.text}</p><small style={{ color: '#b5c5e0' }}>Visual prompt: {character} {s.text}</small><p><button onClick={() => { setVideoPrompt([character, s.text].filter(Boolean).join('. ')); window.scrollTo({ top: 0, behavior: 'smooth' }); }} style={{ padding: 9, borderRadius: 8, cursor: 'pointer' }}>Use scene as video prompt</button></p></article>)}
-    {scenes.length > 0 && <button onClick={exportStoryboard} style={{ ...field, marginTop: 16, background: '#176d61', cursor: 'pointer' }}>Export JSON</button>}
-  </main>;
+type Job={id:string;project_id:string;scene_id:string;status:string;video_url?:string;error?:string};
+type Config={cloud:boolean;generation:boolean;agent:boolean;provider:string};
+const blankScene=():Scene=>({id:crypto.randomUUID(),prompt:'',narration:'',camera:'Slow push in',image:''});
+const fresh=():Project=>({id:crypto.randomUUID(),title:'Untitled film',character:'',script:'',ratio:'16:9',scenes:Array.from({length:4},blankScene),updatedAt:new Date().toISOString()});
+const sample='A young fox hears a faint cry beside a frozen lake. It follows tiny tracks to a bird trapped under a branch. The fox nudges the branch aside and frees the frightened bird. Together they watch the sunrise, safe on the snowy shore.';
+export default function Home(){
+ const [projects,setProjects]=useState<Project[]>([]);const [active,setActive]=useState('');const [loaded,setLoaded]=useState(false);
+ const [config,setConfig]=useState<Config>({cloud:false,generation:false,agent:false,provider:'fal.ai · Wan 2.2 5B'});
+ const [session,setSession]=useState<Session|null>(null);const [email,setEmail]=useState('');const [password,setPassword]=useState('');
+ const [notice,setNotice]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [tab,setTab]=useState<'studio'|'account'>('studio');
+ const [jobs,setJobs]=useState<Job[]>([]);const [media,setMedia]=useState<Record<string,string>>({});const [audioName,setAudioName]=useState('');const [progress,setProgress]=useState<number|null>(null);const [preview,setPreview]=useState('');
+ const abort=useRef<AbortController|null>(null);const mediaUrls=useRef<Record<string,string>>({});const previewUrl=useRef('');
+ const p=projects.find(x=>x.id===active);
+ useEffect(()=>{
+  try{const saved=JSON.parse(localStorage.getItem('studio-v1')||'[]');const valid=projectSchema.array().parse(saved);const list=valid.length?valid:[fresh()];setProjects(list);setActive(list[0].id);}catch{const first=fresh();setProjects([first]);setActive(first.id);setError('Saved projects could not be loaded. Import your JSON backup if available.');}setLoaded(true);
+  void api('/api/config').then(setConfig).catch(()=>setError('Connection unavailable. Local editing still works.'));
+  if(!supabase)return;void supabase.auth.getSession().then(({data})=>setSession(data.session));const {data}=supabase.auth.onAuthStateChange((_event,s)=>setSession(s));return()=>data.subscription.unsubscribe();
+ },[]);
+ useEffect(()=>{if(!loaded)return;try{localStorage.setItem('studio-v1',JSON.stringify(projects));}catch{setError('Device storage is full. Export a JSON backup now.');}},[projects,loaded]);
+ useEffect(()=>{let cancelled=false;setMedia({});setAudioName('');setPreview('');if(!p)return;
+ void (async()=>{const entries:Record<string,string>={};for(const s of p.scenes){const blob=await getMedia(s.id);if(blob)entries[s.id]=URL.createObjectURL(blob);}if(cancelled){Object.values(entries).forEach(URL.revokeObjectURL);return;}Object.values(mediaUrls.current).forEach(URL.revokeObjectURL);mediaUrls.current=entries;setMedia(entries);if(await getMedia(`${p.id}:audio`))setAudioName('Saved soundtrack');})().catch(()=>setError('Could not restore local clips.'));
+ return()=>{cancelled=true;};
+ // Re-load only when changing projects. Scene imports update their own URLs.
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[active]);
+ useEffect(()=>()=>{abort.current?.abort();Object.values(mediaUrls.current).forEach(URL.revokeObjectURL);if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);},[]);
+ function update(patch:Partial<Project>){if(!p)return;setProjects(all=>all.map(x=>x.id===p.id?{...x,...patch,updatedAt:new Date().toISOString()}:x));}
+ function scene(id:string,patch:Partial<Scene>){if(p)update({scenes:p.scenes.map(s=>s.id===id?{...s,...patch}:s)});}
+ async function run(fn:()=>Promise<void>){setBusy(true);setError('');setNotice('');try{await fn();}catch(e){setError(e instanceof Error?e.message:'Operation failed.');}finally{setBusy(false);}}
+ function newProject(){const item=fresh();setProjects(a=>[item,...a]);setActive(item.id);setTab('studio');}
+ async function save(){if(!p)return;await api('/api/projects',{method:'POST',body:JSON.stringify(p)});setNotice('Project saved to your cloud account.');}
+ async function loadCloud(){const {projects:remote}=await api('/api/projects');const valid=projectSchema.array().parse(remote);setProjects(local=>{const map=new Map(local.map(x=>[x.id,x]));for(const item of valid){const old=map.get(item.id);if(!old || item.updatedAt>old.updatedAt)map.set(item.id,item);}return [...map.values()];});setNotice('Cloud projects merged. Newer local edits were kept.');}
+ async function refresh(){const {jobs:all}=await api('/api/video');const results:Job[]=[];for(const j of all as Job[]){if(['IN_QUEUE','IN_PROGRESS'].includes(j.status)){try{results.push((await api(`/api/video?id=${j.id}`)).job);}catch{results.push(j);}}else results.push(j);}setJobs(results);}
+ useEffect(()=>{if(!session)return;void refresh().catch(()=>{});const timer=setInterval(()=>void refresh().catch(()=>{}),15000);return()=>clearInterval(timer);},[session]);
+ async function generate(s:Scene){if(!p)return;await save();const keyName=`studio-job:${p.id}:${s.id}`;let key=localStorage.getItem(keyName);if(!key){key=crypto.randomUUID();localStorage.setItem(keyName,key);}const data=await api('/api/video',{method:'POST',body:JSON.stringify({key,projectId:p.id,sceneId:s.id,prompt:promptFor(p,s),ratio:p.ratio,image:s.image})});setJobs(a=>[data.job,...a.filter(j=>j.id!==data.job.id)]);setNotice('Job submitted. Status refreshes every 15 seconds.');}
+ async function importClip(s:Scene,file:File){if(file.size>100*1024*1024)throw new Error('Keep each clip below 100 MB.');if(!/^video\//.test(file.type))throw new Error('Choose a video file.');await putMedia(s.id,file);if(mediaUrls.current[s.id])URL.revokeObjectURL(mediaUrls.current[s.id]);const url=URL.createObjectURL(file);mediaUrls.current[s.id]=url;setMedia(a=>({...a,[s.id]:url}));setNotice('Clip saved on this device. Export uses five seconds; shorter clips hold their final frame.');}
+ async function imageInput(s:Scene,file:File){if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>1000000)throw new Error('Choose PNG, JPEG or WebP under 1 MB.');const data=await new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result));r.onerror=()=>reject(new Error('Image read failed.'));r.readAsDataURL(file);});scene(s.id,{image:data});}
+ async function exportVideo(){if(!p)return;if(typeof MediaRecorder==='undefined')throw new Error('Video export is not supported by this browser.');const clips:Blob[]=[];for(const s of p.scenes){const b=await getMedia(s.id);if(!b)throw new Error('Import a video clip for every scene before export. Download AI outputs and import them here.');clips.push(b);}abort.current=new AbortController();setProgress(0);try{const blob=await renderFilm(clips,p.ratio,await getMedia(`${p.id}:audio`),setProgress,abort.current.signal);if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);previewUrl.current=URL.createObjectURL(blob);setPreview(previewUrl.current);download(blob,`studio-film.${blob.type.includes('mp4')?'mp4':'webm'}`);setNotice('Video exported. Your soundtrack is included; source clip audio is muted.');}finally{setProgress(null);}}
+ async function copy(text:string){await navigator.clipboard.writeText(text);setNotice('Prompt copied.');}
+ function backup(){if(p)download(new Blob([JSON.stringify(p,null,2)],{type:'application/json'}),'studio-project.json');}
+ async function importProject(file:File){if(file.size>3500000)throw new Error('Project file exceeds 3.5 MB.');const item=projectSchema.parse(JSON.parse(await file.text()));setProjects(a=>[item,...a.filter(x=>x.id!==item.id)]);setActive(item.id);setNotice('Project restored. Video and audio files are stored separately.');}
+ async function login(signup=false){if(!supabase)throw new Error('Cloud authentication is not configured.');const {error:e}=signup?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});if(e)throw new Error(e.message);setPassword('');setNotice(signup?'Check your email for account confirmation.':'Signed in.');}
+ return <div className="shell"><aside className="sidebar"><a className="brand" href="/">▣ <span>FRAME<span className="brand-light"> / Studio</span></span></a><div className="workspace-label">YOUR WORKSPACE</div><button className={tab==='studio'?'nav active':'nav'} onClick={()=>setTab('studio')}>▤ &nbsp; My projects <span>{projects.length}</span></button><button className={tab==='account'?'nav active':'nav'} onClick={()=>setTab('account')}>◉ &nbsp; Account & connections</button><div className="project-nav">{projects.map(x=><button key={x.id} className={x.id===active?'selected':''} onClick={()=>{setActive(x.id);setTab('studio');}}>{x.title||'Untitled'}<small>{x.scenes.length*5}s · {x.ratio}</small></button>)}</div><button className="secondary" onClick={newProject}>＋ New project</button><div className="budget"><span className="dot"/> ZERO-BUDGET MODE<p>Plan, import and edit on your device. No paid generation enabled by default.</p></div></aside>
+ <main><header><span>Workspace <span className="muted">/ {tab==='studio'?'Create a film':'Settings'}</span></span><span className="pill">{session?'Signed in':'Local workspace'}</span></header>
+ <div className="messages" aria-live="polite">{notice&&<div className="success">{notice}</div>}{error&&<div className="error" role="alert">{error}</div>}</div>
+ {tab==='account'?<section className="panel settings"><div className="eyebrow">CONNECTIONS</div><h1>Your studio, your control.</h1><p>Local projects work without an account. Cloud storage and generation require a configured Supabase account.</p><div className="connection"><b>Cloud authentication</b><span>{config.cloud?'Configured':'Setup required'}</span></div>{session?<><p>{session.user.email}</p><button onClick={()=>void run(loadCloud)}>Load cloud projects</button><button className="secondary" onClick={()=>void run(async()=>{await supabase!.auth.signOut();setJobs([]);setNotice('Signed out. Local files remain on this device.');})}>Sign out</button></>:<form onSubmit={e=>{e.preventDefault();void run(()=>login());}}><label>Email<input type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" minLength={12} autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="actions"><button disabled={busy||!config.cloud}>Sign in</button><button type="button" className="secondary" disabled={busy||!config.cloud||password.length<12||!email} onClick={()=>void run(()=>login(true))}>Create account</button></div></form>}<div className="connection"><b>{config.provider}</b><span>{config.generation?'Enabled · credits required':'Disabled · no spending'}</span></div><p>Text-to-video and image-to-video integration, approximately 5 seconds, 720p. No generated sound. Provider access in Pakistan must be confirmed with your account; no regional bypass is used.</p><div className="connection"><b>AI director · Ollama</b><span>{config.agent?'Configured':'Not connected'}</span></div><p>Optional self-hosted AI storyboard assistant. Requires a running model server. Sentence planning is available without AI.</p><a href="https://github.com/mlatifali007-code/ai-video-studio#setup" target="_blank" rel="noreferrer">Setup instructions ↗</a></section>:p&&<>
+ <section className="hero"><div><div className="eyebrow">FROM AN IDEA TO YOUR NEXT FILM</div><h1>Make every scene count.</h1><p>Four scenes. Twenty seconds. One story worth watching.</p></div><button className="secondary" onClick={backup}>↓ Project backup</button></section>
+ <div className="stats"><div><span>FILM LENGTH</span><strong>{p.scenes.length*5}<small> seconds</small></strong></div><div><span>SCENES</span><strong>{String(p.scenes.length).padStart(2,'0')}<small> × 5s</small></strong></div><div><span>CLIPS READY</span><strong>{p.scenes.filter(s=>media[s.id]).length}<small> / {p.scenes.length}</small></strong></div></div>
+ <div className="editor-grid"><section className="panel"><div className="section-head"><h2><span>01</span> Story & direction</h2><span className="pill">Auto-saved locally</span></div><div className="two"><label>Project title<input maxLength={100} value={p.title} onChange={e=>update({title:e.target.value})}/></label><label>Canvas<select value={p.ratio} onChange={e=>update({ratio:e.target.value as Project['ratio']})}><option>16:9</option><option>9:16</option><option>1:1</option></select></label></div><label>Character & visual lock<textarea rows={3} maxLength={1000} value={p.character} onChange={e=>update({character:e.target.value})} placeholder="A young red fox, white chest, black paws. Photorealistic. Snowy forest at sunrise."/></label><p className="hint">Repeated in every prompt. A matching reference image helps; identity consistency is not guaranteed.</p><label>Your story<textarea rows={5} maxLength={20000} value={p.script} onChange={e=>update({script:e.target.value})} placeholder="Write four short sentences for a 20-second story…"/></label><div className="actions"><button disabled={busy||!p.script.trim()} onClick={()=>void run(async()=>{const scenes=draftScenes(p.script);if(p.scenes.some(s=>s.prompt||media[s.id])&&!confirm('Replace the current scenes? Export a backup first if needed.'))return;update({scenes});setNotice('Sentence planner created drafts, not AI-generated video. Up to 12 words per scene.');})}>✦ Plan scenes</button><button className="secondary" disabled={busy||!config.agent||!session||!p.script.trim()} onClick={()=>void run(async()=>{const data=await api('/api/agent',{method:'POST',body:JSON.stringify({idea:p.script,character:p.character})});if(p.scenes.some(s=>s.prompt)&&!confirm('Replace current scenes with the AI draft?'))return;update({scenes:data.scenes.map((s:Scene)=>({...s,id:crypto.randomUUID(),image:''}))});setNotice('AI director draft ready. Review before generation.');})}>AI director {config.agent?'':'· not connected'}</button><button className="text-button" onClick={()=>update({script:sample})}>Try a 20s story</button></div><p className="hint">Planner splits sentences into ~5s narration drafts. Adjust pacing before recording.</p></section>
+ <section className="panel export"><div className="section-head"><h2><span>02</span> Finish your film</h2></div><div className="export-art"><span>▶</span><b>{p.ratio}</b><small>{p.scenes.length*5}s timeline</small></div><label className="upload">♫ Add voiceover / music<input type="file" accept="audio/*" onChange={e=>{const f=e.target.files?.[0];if(f)void run(async()=>{if(f.size>50000000)throw new Error('Audio must be under 50 MB.');await putMedia(`${p.id}:audio`,f);setAudioName(f.name);});e.target.value='';}}/></label><p className="hint">{audioName||'Silent export unless you add a soundtrack.'} Audio plays once, from the beginning. Original clip audio is muted.</p>{audioName&&<button className="text-button" onClick={()=>void run(async()=>{await removeMedia(`${p.id}:audio`);setAudioName('');})}>Remove audio</button>}<button className="full" disabled={busy||!p.scenes.length} onClick={()=>void run(exportVideo)}>↓ Export {p.scenes.length*5}s video</button>{progress!==null&&<><progress value={progress} max={100}/><p>{progress}% · Keep this tab open</p><button className="secondary" onClick={()=>abort.current?.abort()}>Cancel export</button></>}<p className="hint">Free on-device assembly of imported clips. WebM on Chrome; MP4 where supported. Export runs in real time. Short clips hold their last frame.</p>{preview&&<video controls playsInline src={preview}/>}<div className="actions"><button className="text-button" disabled={busy||!session} onClick={()=>void run(save)}>Save to cloud</button><label className="text-button">Import JSON<input type="file" accept="application/json,.json" onChange={e=>{const f=e.target.files?.[0];if(f)void run(()=>importProject(f));e.target.value='';}}/></label></div></section></div>
+ <section className="timeline"><div className="section-head"><div><div className="eyebrow">YOUR SHOT LIST</div><h2>Scene timeline</h2></div><button className="secondary" disabled={p.scenes.length>=120} onClick={()=>update({scenes:[...p.scenes,blankScene()]})}>＋ Add 5s scene</button></div><div className="actions">{session&&<button className="text-button" disabled={busy} onClick={()=>void run(refresh)}>Refresh generation jobs</button>}</div><div className="info">{config.generation?'Provider connected. Generating uses provider credits.':'AI generation is off: no credits or spending enabled.'} You can copy prompts and import clips you already have.</div><div className="scenes">{p.scenes.map((s,i)=>{const job=jobs.find(j=>j.scene_id===s.id&&j.project_id===p.id);return <article className="scene" key={s.id}><div className="scene-top"><b><span>{String(i+1).padStart(2,'0')}</span> {i*5}s — {(i+1)*5}s</b><div><button className="icon" aria-label={`Move scene ${i+1} up`} disabled={i===0} onClick={()=>{const list=[...p.scenes];[list[i-1],list[i]]=[list[i],list[i-1]];update({scenes:list});}}>↑</button><button className="icon" aria-label={`Remove scene ${i+1}`} onClick={()=>{if(confirm('Remove this scene from the timeline?'))update({scenes:p.scenes.filter(x=>x.id!==s.id)});}}>×</button></div></div>{media[s.id]?<video controls playsInline src={media[s.id]}/>:<div className="scene-placeholder">{s.image?<img src={s.image} alt={`Reference for scene ${i+1}`}/>:<><span>▧</span><small>No clip yet</small></>}</div>}<label>Visual action<textarea rows={3} value={s.prompt} maxLength={1800} onChange={e=>scene(s.id,{prompt:e.target.value})} placeholder="Describe one clear action…"/></label><label>Camera<input value={s.camera} maxLength={200} onChange={e=>scene(s.id,{camera:e.target.value})}/></label><label>Narration<textarea rows={2} value={s.narration} maxLength={500} onChange={e=>scene(s.id,{narration:e.target.value})}/></label><div className="actions"><button className="text-button" onClick={()=>void run(()=>copy(promptFor(p,s)))}>Copy prompt</button><button className="text-button" disabled={!s.narration} onClick={()=>{if(!('speechSynthesis' in window)){setError('Voice preview unsupported.');return;}speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(s.narration);u.lang='en-US';speechSynthesis.speak(u);}}>Hear narration</button></div><p className="hint">Device voice preview only; not included in export.</p><div className="actions"><label className="upload compact">＋ Reference image<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{const f=e.target.files?.[0];if(f)void run(()=>imageInput(s,f));e.target.value='';}}/></label><label className="upload compact">↑ Import clip<input type="file" accept="video/mp4,video/webm" onChange={e=>{const f=e.target.files?.[0];if(f)void run(()=>importClip(s,f));e.target.value='';}}/></label></div>{s.image&&<button className="text-button" onClick={()=>scene(s.id,{image:''})}>Remove reference</button>}<button className="generate full" disabled={busy||!config.generation||!session||!s.prompt.trim()||!!job} onClick={()=>void run(()=>generate(s))}>{config.generation?`Generate ${s.image?'image → video':'5s clip'}`:'Generation not enabled'}</button>{job&&<div className="job"><b>{job.status}</b>{job.error&&<p>{job.error}</p>}{job.video_url&&<a href={job.video_url} target="_blank" rel="noreferrer">Download provider MP4 ↗</a>}</div>}</article>;})}</div></section><footer>FRAME / Studio · Your drafts stay on this device. Back up projects and media before clearing browser data.</footer>
+ </>}{!loaded&&<p>Loading your workspace…</p>}</main></div>;
 }
